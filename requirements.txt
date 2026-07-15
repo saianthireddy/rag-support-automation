@@ -1,0 +1,7 @@
+fastapi>=0.110
+uvicorn[standard]>=0.29
+pydantic>=2.6
+openai>=1.30
+faiss-cpu>=1.8 ; platform_machine != "arm64" or python_version >= "3.9"
+pinecone>=4.0
+numpy>=1.26
