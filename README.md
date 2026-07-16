@@ -1,27 +1,22 @@
 # RAG Support Automation
 
+[![CI](https://github.com/saianthireddy/rag-support-automation/actions/workflows/ci.yml/badge.svg)](https://github.com/saianthireddy/rag-support-automation/actions/workflows/ci.yml) [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue)](https://github.com/saianthireddy/rag-support-automation) [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 **Intelligent Technical Knowledge & Support Automation Platform** — an end-to-end Retrieval-Augmented Generation (RAG) system that answers technical support questions from enterprise knowledge sources (manuals, SOPs, support documentation) with grounded, citation-backed responses.
 
 Built to reduce support ticket volume by automating first-line technical support: documents are ingested, chunked, embedded, and indexed in a vector store; incoming questions retrieve the most relevant context, and an LLM generates an answer strictly grounded in that context.
 
 ## Architecture
 
-```
-                 ┌─────────────────────────────────────────────┐
-                 │                 FastAPI  /ask                │
-                 └──────────────────────┬──────────────────────┘
-                                        │
-   Ingestion                            ▼                    Generation
-┌─────────────┐   ┌───────────┐   ┌───────────┐   ┌──────────────────────┐
-│ Docs (.md,  │──▶│  Chunker  │──▶│ Retriever │──▶│  Prompt + LLM        │
-│ .txt, SOPs) │   │ (overlap) │   │  (top-k)  │   │  (citation-grounded) │
-└─────────────┘   └───────────┘   └─────┬─────┘   └──────────────────────┘
-                                        │
-                              ┌─────────┴─────────┐
-                              │   Vector Store    │
-                              │ FAISS │ Pinecone  │
-                              │  │ In-Memory      │
-                              └───────────────────┘
+```mermaid
+flowchart LR
+    A["Docs<br/>manuals · SOPs"] --> B["Chunker<br/>paragraph-aware, overlap"]
+    B --> C["Embedder<br/>OpenAI / hashing"]
+    C --> D[("Vector store<br/>FAISS · Pinecone · in-memory")]
+    Q["User question"] --> R["Retriever<br/>top-k cosine"]
+    D --> R
+    R --> G["LLM<br/>citation-grounded answer"]
+    G --> API["FastAPI<br/>/ask · /health"]
 ```
 
 Every layer sits behind a small interface, so backends are swappable via config:
