@@ -81,6 +81,7 @@ src/rag_support/
 ├── generation/          # prompts + RAG chain
 └── api/                 # FastAPI app + schemas
 scripts/ingest.py        # CLI ingestion with chunk statistics
+scripts/eval_retrieval.py # CLI retrieval-quality eval (precision/recall/MRR)
 tests/                   # unit + API tests (offline, deterministic)
 data/sample_docs/        # example manual + SOP
 ```
@@ -92,6 +93,32 @@ Drop `.md`/`.txt` files into a folder and run:
 ```bash
 python scripts/ingest.py path/to/your/docs
 ```
+
+## Retrieval evaluation
+
+`scripts/eval_retrieval.py` runs a small labeled query set (each query paired
+with the source document it should retrieve from) against the offline
+hashing-embedder + in-memory-store pipeline, and reports precision, recall,
+and MRR. It's fully offline and runs in well under a second, so it's cheap
+enough to run on every change to the chunking or retrieval logic.
+
+```bash
+python scripts/eval_retrieval.py
+```
+
+```
+Evaluated 6 labeled queries against top-4 retrieval
+
+Metric            Score
+-----------------------
+Precision@1        1.00
+Recall@4           1.00
+MRR                1.00
+```
+
+The eval set lives in the script (`EVAL_SET`) — add a row any time a new
+sample doc is added under `data/sample_docs/`, so retrieval quality stays
+covered as the knowledge base grows.
 
 ## Testing & CI
 
