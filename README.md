@@ -83,7 +83,7 @@ src/rag_support/
 scripts/ingest.py        # CLI ingestion with chunk statistics
 scripts/eval_retrieval.py # CLI retrieval-quality eval (precision/recall/MRR)
 tests/                   # unit + API tests (offline, deterministic)
-data/sample_docs/        # example manual + SOP
+data/sample_docs/        # example manuals, SOPs, and policy docs
 ```
 
 ## Ingest your own docs
@@ -96,25 +96,40 @@ python scripts/ingest.py path/to/your/docs
 
 ## Retrieval evaluation
 
-`scripts/eval_retrieval.py` runs a small labeled query set (each query paired
-with the source document it should retrieve from) against the offline
-hashing-embedder + in-memory-store pipeline, and reports precision, recall,
+`scripts/eval_retrieval.py` runs a labeled query set against the offline
+hashing-embedder + in-memory-store pipeline and reports precision, recall,
 and MRR. It's fully offline and runs in well under a second, so it's cheap
 enough to run on every change to the chunking or retrieval logic.
 
+The eval is built to be *failable*: the corpus contains distractor documents
+that deliberately share vocabulary ("restart", "error code", "data loss"
+each appear in more than one file), and a third of the queries are
+paraphrases that describe the problem in a user's words rather than the
+document's. An earlier version of this eval scored a perfect 1.00 on every
+metric — because the corpus was two documents and `top_k` covered the whole
+index, so recall literally could not fail. Perfect scores from a benchmark
+that cannot fail measure nothing.
+
 ```bash
-python scripts/eval_retrieval.py
+python scripts/eval_retrieval.py --show-misses
 ```
 
 ```
-Evaluated 6 labeled queries against top-4 retrieval
+Evaluated 18 labeled queries against top-4 retrieval
 
 Metric            Score
 -----------------------
-Precision@1        1.00
-Recall@4           1.00
-MRR                1.00
+Precision@1        0.61
+Recall@4           0.94
+MRR                0.74
 ```
+
+The misses are informative: the bag-of-words hashing embedder loses
+paraphrased queries like "the unit is frozen and unresponsive" (manual says
+"hold the power button") to lexically-overlapping distractors. That's the
+expected failure mode of hashing embeddings, and the headroom the OpenAI
+embedding backend exists to close. `--show-misses` prints each failing query
+and what outranked the expected source.
 
 The eval set lives in the script (`EVAL_SET`) — add a row any time a new
 sample doc is added under `data/sample_docs/`, so retrieval quality stays
