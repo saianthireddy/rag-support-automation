@@ -6,6 +6,20 @@
 
 Built to reduce support ticket volume by automating first-line technical support: documents are ingested, chunked, embedded, and indexed in a vector store; incoming questions retrieve the most relevant context, and an LLM generates an answer strictly grounded in that context.
 
+## Provenance
+
+This is a clean-room reimplementation of a technical-support RAG platform I built at
+Teledyne Technologies. The production system is proprietary — none of its code, data,
+documents, or configuration appears in this repository.
+
+What carries over is the architecture and the design decisions behind it: paragraph-aware
+chunking with sliding-window overlap, every layer behind a swappable interface, and strict
+grounding that escalates out-of-corpus questions rather than answering them. What does not
+carry over is anything I couldn't write from scratch — the sample corpus in `data/sample_docs`
+is synthetic, and the whole pipeline runs offline with no API keys.
+
+Repository history starts July 2026, when I rebuilt it in public.
+
 ## Architecture
 
 ```mermaid
