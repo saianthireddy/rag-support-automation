@@ -33,7 +33,7 @@ flowchart LR
     G --> API["FastAPI<br/>/ask · /health"]
 ```
 
-Every layer sits behind a small interface, so backends are swappable via config:
+Every layer sits behind a small interface, but today the running API always uses the offline column below — `config.py` defines the production settings, they just aren't read by `api/main.py` yet:
 
 | Layer        | Production                     | Offline / tests          |
 |--------------|--------------------------------|--------------------------|
@@ -46,7 +46,7 @@ This means the full pipeline — including the API — runs and tests **without 
 ## Features
 
 - **Document ingestion** — recursive loading of manuals/SOPs with paragraph-aware chunking and sliding-window overlap
-- **Semantic search** — cosine similarity over embeddings, with FAISS (self-hosted) and Pinecone (managed) backends
+- **Semantic search** — cosine similarity over embeddings; FAISS (self-hosted) and Pinecone (managed) backends exist behind the interface, but the running API uses the in-memory store today
 - **Grounded generation** — answers cite source documents; questions outside the knowledge base are escalated, not hallucinated
 - **FastAPI service** — `/ask` and `/health` endpoints with Pydantic validation
 - **Production-ready** — Dockerfile, docker-compose, GitHub Actions CI (lint + tests on Python 3.11/3.12)
@@ -76,10 +76,10 @@ curl -X POST http://localhost:8000/ask \
   -d '{"question": "How do I restart the device?"}'
 ```
 
-### With OpenAI + Pinecone (production mode)
+### With OpenAI + Pinecone (not wired yet)
 
 ```bash
-cp .env.example .env   # add OPENAI_API_KEY (and PINECONE_API_KEY if using Pinecone)
+cp .env.example .env   # not read by api/main.py yet — this still boots the same offline pipeline
 docker compose up --build
 ```
 
