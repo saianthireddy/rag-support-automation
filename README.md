@@ -47,9 +47,9 @@ This means the full pipeline — including the API — runs and tests **without 
 
 - **Document ingestion** — recursive loading of manuals/SOPs with paragraph-aware chunking and sliding-window overlap
 - **Semantic search** — cosine similarity over embeddings; FAISS (self-hosted) and Pinecone (managed) backends exist behind the interface, but the running API uses the in-memory store today
-- **Grounded generation** — answers cite source documents; questions outside the knowledge base are escalated, not hallucinated
+- **Grounded generation** — answers cite source documents; the system prompt tells the model to answer only from retrieved context and to escalate when the answer isn't there. The service itself escalates automatically only when retrieval returns nothing — there is no relevance threshold yet, so an off-topic question still retrieves the nearest chunks
 - **FastAPI service** — `/ask` and `/health` endpoints with Pydantic validation
-- **Production-ready** — Dockerfile, docker-compose, GitHub Actions CI (lint + tests on Python 3.11/3.12)
+- **Deployable** — Dockerfile, docker-compose, GitHub Actions CI (lint + tests on Python 3.11/3.12)
 
 ## Quickstart
 
