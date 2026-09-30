@@ -43,7 +43,15 @@ escalates. Two numbers matter and pull against each other:
 Both sets are small and hand-written, and the floor was chosen on them, so
 treat the result as a sanity check rather than a guarantee.
 
+Pipelines and stores
+--------------------
+``--pipeline native|langchain`` and ``--store memory|chroma`` pick what is
+measured; ``--compare`` runs all four combinations side by side. They share the
+embedder, chunks, top-k and MIN_SCORE, so a difference between rows is the
+framework or the index, not the recipe.
+
 Usage: python scripts/eval_retrieval.py [data/sample_docs] [--top-k 4]
+       python scripts/eval_retrieval.py --compare
 """
 
 from __future__ import annotations
@@ -60,6 +68,7 @@ from rag_support.embeddings.embedder import HashingEmbedder
 from rag_support.ingestion.loader import load_documents
 from rag_support.ingestion.splitter import split_document
 from rag_support.retrieval.retriever import Retriever
+from rag_support.vectorstore.base import SearchResult
 from rag_support.vectorstore.memory_store import InMemoryStore
 
 
@@ -117,18 +126,56 @@ OFF_TOPIC: list[str] = [
 ]
 
 
-def build_retriever(root: str, top_k: int, min_score: float = 0.0) -> Retriever:
+def _chunks(root: str) -> list:
     settings = get_settings()
-    embedder = HashingEmbedder()
-    store = InMemoryStore()
-
     chunks = []
     for doc in load_documents(root):
         chunks.extend(split_document(doc, settings.chunk_size, settings.chunk_overlap))
-    vectors = embedder.embed([c.text for c in chunks])
-    store.add(vectors, [{"text": c.text, "source": c.source} for c in chunks])
+    return chunks
 
-    return Retriever(embedder, store, top_k=top_k, min_score=min_score)
+
+class _LangChainRetriever:
+    """Presents a LangChain pipeline's real retriever through ``.retrieve()``,
+    so ``evaluate`` measures exactly what the LangChain chain would retrieve."""
+
+    def __init__(self, pipeline):
+        self._pipeline = pipeline
+
+    def retrieve(self, query: str) -> list[SearchResult]:
+        return [
+            SearchResult(
+                text=d.page_content, source=d.metadata.get("source", ""), score=float("nan")
+            )
+            for d in self._pipeline.retrieve(query)
+        ]
+
+
+def build_retriever(
+    root: str, top_k: int, min_score: float = 0.0, pipeline: str = "native", store: str = "memory"
+):
+    embedder = HashingEmbedder()
+    chunks = _chunks(root)
+
+    if pipeline == "langchain":
+        from rag_support.generation.langchain_pipeline import (
+            LangChainEmbeddings,
+            LangChainRagPipeline,
+            build_vectorstore,
+        )
+
+        vectorstore = build_vectorstore(chunks, LangChainEmbeddings(embedder), store)
+        pipeline_ = LangChainRagPipeline(vectorstore, top_k=top_k, min_score=min_score)
+        return _LangChainRetriever(pipeline_)
+
+    if store == "chroma":
+        from rag_support.vectorstore.chroma_store import ChromaStore
+
+        index = ChromaStore()
+    else:
+        index = InMemoryStore()
+    vectors = embedder.embed([c.text for c in chunks])
+    index.add(vectors, [{"text": c.text, "source": c.source} for c in chunks])
+    return Retriever(embedder, index, top_k=top_k, min_score=min_score)
 
 
 def evaluate(retriever: Retriever, eval_set: list[EvalQuery]) -> dict:
@@ -184,16 +231,32 @@ def main() -> None:
         default=get_settings().min_score,
         help="relevance floor (MIN_SCORE)",
     )
+    parser.add_argument("--pipeline", choices=["native", "langchain"], default="native")
+    parser.add_argument("--store", choices=["memory", "chroma"], default="memory")
+    parser.add_argument(
+        "--compare", action="store_true", help="run every pipeline x store combination"
+    )
     parser.add_argument(
         "--show-misses", action="store_true", help="list queries whose top hit was wrong"
     )
     args = parser.parse_args()
 
-    retriever = build_retriever(args.root, args.top_k, args.min_score)
-    metrics = evaluate(retriever, EVAL_SET)
+    if args.compare:
+        compare(args.root, args.top_k, args.min_score)
+        return
+
+    # Ranking metrics use no floor (a refusal is not a ranking miss); refusal
+    # metrics use the floor. Same split as the tests.
+    metrics = evaluate(
+        build_retriever(args.root, args.top_k, 0.0, args.pipeline, args.store), EVAL_SET
+    )
+    retriever = build_retriever(args.root, args.top_k, args.min_score, args.pipeline, args.store)
     refusal = evaluate_refusal(retriever, EVAL_SET, OFF_TOPIC)
 
-    print(f"Evaluated {metrics['n']} labeled queries against top-{args.top_k} retrieval\n")
+    print(
+        f"Evaluated {metrics['n']} labeled queries against top-{args.top_k} retrieval "
+        f"(pipeline={args.pipeline}, store={args.store})\n"
+    )
     print(f"{'Metric':<15}{'Score':>8}")
     print(f"{'-' * 23}")
     print(f"{'Precision@1':<15}{metrics['precision_at_1']:>8.2f}")
@@ -212,6 +275,24 @@ def main() -> None:
         print(f"\nOff-topic questions still answered ({len(refusal['answered_off_topic'])}):")
         for query in refusal["answered_off_topic"]:
             print(f"  {query}")
+
+
+def compare(root: str, top_k: int, min_score: float) -> None:
+    header = f"{'Pipeline':<11}{'Store':<8}{'P@1':>6}{'R@' + str(top_k):>6}{'MRR':>6}"
+    header += f"{'Off-topic refused':>19}{'Answerable refused':>20}"
+    print(f"All pipeline x store combinations, top-{top_k}, MIN_SCORE={min_score:g}\n")
+    print(header)
+    print("-" * len(header))
+    for pipeline in ("native", "langchain"):
+        for store in ("memory", "chroma"):
+            m = evaluate(build_retriever(root, top_k, 0.0, pipeline, store), EVAL_SET)
+            r = evaluate_refusal(
+                build_retriever(root, top_k, min_score, pipeline, store), EVAL_SET, OFF_TOPIC
+            )
+            print(
+                f"{pipeline:<11}{store:<8}{m['precision_at_1']:>6.2f}{m['recall_at_k']:>6.2f}"
+                f"{m['mrr']:>6.2f}{r['off_topic_refused']:>19.2f}{r['answerable_refused']:>20.2f}"
+            )
 
 
 if __name__ == "__main__":
