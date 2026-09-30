@@ -34,3 +34,18 @@ def test_scores_are_sorted_descending():
     results = build_retriever(top_k=3).retrieve("billing credit card payment")
     scores = [r.score for r in results]
     assert scores == sorted(scores, reverse=True)
+
+
+def test_tokenizer_drops_punctuation_and_stopwords():
+    from rag_support.embeddings.embedder import tokenize
+
+    assert tokenize("How do I restart the device?") == ["restart", "device"]
+
+
+def test_min_score_filters_weak_matches():
+    embedder = HashingEmbedder(dim=128)
+    store = InMemoryStore()
+    store.add(embedder.embed([t for t, _ in DOCS]), [{"text": t, "source": s} for t, s in DOCS])
+    strict = Retriever(embedder, store, top_k=3, min_score=0.2)
+    assert strict.retrieve("capital of France") == []
+    assert strict.retrieve("reset the router power button")[0].source == "router.md"
