@@ -5,3 +5,8 @@ openai>=1.30
 faiss-cpu>=1.8 ; platform_machine != "arm64" or python_version >= "3.9"
 pinecone>=4.0
 numpy>=1.26
+# LangChain pipeline (PIPELINE=langchain) and Chroma store (VECTOR_BACKEND=chroma)
+langchain-core>=1.0
+langchain-chroma>=1.0
+langchain-openai>=1.0
+chromadb>=1.0
