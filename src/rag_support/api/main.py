@@ -39,7 +39,7 @@ def get_chain() -> RagChain:
         vectors = embedder.embed([c.text for c in chunks])
         store.add(vectors, [{"text": c.text, "source": c.source} for c in chunks])
 
-    retriever = Retriever(embedder, store, top_k=settings.top_k)
+    retriever = Retriever(embedder, store, top_k=settings.top_k, min_score=settings.min_score)
     llm = None if settings.openai_api_key else _offline_llm
     return RagChain(retriever, llm=llm, chat_model=settings.chat_model)
 

@@ -47,7 +47,7 @@ This means the full pipeline — including the API — runs and tests **without 
 
 - **Document ingestion** — recursive loading of manuals/SOPs with paragraph-aware chunking and sliding-window overlap
 - **Semantic search** — cosine similarity over embeddings; FAISS (self-hosted) and Pinecone (managed) backends exist behind the interface, but the running API uses the in-memory store today
-- **Grounded generation** — answers cite source documents; the system prompt tells the model to answer only from retrieved context and to escalate when the answer isn't there. The service itself escalates automatically only when retrieval returns nothing — there is no relevance threshold yet, so an off-topic question still retrieves the nearest chunks
+- **Grounded generation** — answers cite source documents. A relevance floor (`MIN_SCORE`) drops weak matches, so a question the corpus can't answer retrieves nothing and is escalated to a human instead of being answered from unrelated chunks. Measured on the eval below: 10 of 12 off-topic questions are escalated, and no answerable question is
 - **FastAPI service** — `/ask` and `/health` endpoints with Pydantic validation
 - **Deployable** — Dockerfile, docker-compose, GitHub Actions CI (lint + tests on Python 3.11/3.12)
 
@@ -133,17 +133,41 @@ Evaluated 18 labeled queries against top-4 retrieval
 
 Metric            Score
 -----------------------
-Precision@1        0.61
-Recall@4           0.94
-MRR                0.74
+Precision@1        0.89
+Recall@4           1.00
+MRR                0.94
+
+Refusal at MIN_SCORE=0.05 (12 off-topic questions)
+
+Off-topic refused           0.83
+Answerable refused          0.00
 ```
 
-The misses are informative: the bag-of-words hashing embedder loses
-paraphrased queries like "the unit is frozen and unresponsive" (manual says
-"hold the power button") to lexically-overlapping distractors. That's the
-expected failure mode of hashing embeddings, and the headroom the OpenAI
-embedding backend exists to close. `--show-misses` prints each failing query
-and what outranked the expected source.
+These numbers rose from 0.61 / 0.94 / 0.74 after two tokenizer fixes in the
+hashing embedder. Punctuation used to stay attached to words, so "device?"
+never matched "device". Stopwords ("what", "is", "the") used to dominate the
+vectors. The vector size also grew from 256 to 4096 buckets, because hash
+collisions were making unrelated words match.
+
+**Refusal.** Retrieval always returns the nearest chunks, even for "How do I
+bake sourdough bread?". `MIN_SCORE` drops anything below a similarity floor,
+so those questions get no context and the chain escalates. The eval measures
+both sides of that trade-off: off-topic questions refused (higher is better)
+and answerable questions wrongly refused (must stay at zero). The two
+off-topic questions that still get through ("sourdough bread", "the weather
+tomorrow") share a content word with a support document, which a
+bag-of-words embedder cannot tell apart from a real match. Both question sets
+are small and hand-written, and 0.05 was chosen on them (the tightest
+separating value was about 0.07), so read these numbers as a sanity check,
+not a guarantee. OpenAI embeddings score on a different scale and need their
+own `MIN_SCORE`.
+
+The remaining misses are the expected failure mode of hashing embeddings:
+paraphrases like "the unit is frozen and unresponsive" (manual says "hold the
+power button") lose to lexically-overlapping distractors. That's the headroom
+the OpenAI embedding backend exists to close. `--show-misses` prints each
+failing query, what outranked it, and any off-topic question that was still
+answered. `tests/test_eval.py` fails CI if these numbers regress.
 
 The eval set lives in the script (`EVAL_SET`) — add a row any time a new
 sample doc is added under `data/sample_docs/`, so retrieval quality stays
