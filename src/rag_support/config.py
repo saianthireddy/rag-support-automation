@@ -17,6 +17,10 @@ class Settings:
     chunk_size: int = field(default_factory=lambda: int(os.getenv("CHUNK_SIZE", "800")))
     chunk_overlap: int = field(default_factory=lambda: int(os.getenv("CHUNK_OVERLAP", "120")))
     top_k: int = field(default_factory=lambda: int(os.getenv("TOP_K", "4")))
+    # Relevance floor for the offline hashing embedder, chosen from the sweep in
+    # scripts/eval_retrieval.py. OpenAI embeddings score on a different scale
+    # and need their own value.
+    min_score: float = field(default_factory=lambda: float(os.getenv("MIN_SCORE", "0.05")))
     index_path: str = field(default_factory=lambda: os.getenv("INDEX_PATH", "artifacts/index"))
 
 
