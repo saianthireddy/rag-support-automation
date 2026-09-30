@@ -20,3 +20,16 @@ def test_ask_returns_answer_shape():
 
 def test_ask_validates_input():
     assert client.post("/ask", json={"question": ""}).status_code == 422
+
+
+def test_off_topic_question_is_escalated_not_answered():
+    body = client.post("/ask", json={"question": "What is the capital of France?"}).json()
+    assert body["sources"] == []
+    assert body["context_used"] == 0
+    assert "escalate" in body["answer"].lower()
+
+
+def test_on_topic_question_still_gets_context():
+    body = client.post("/ask", json={"question": "How do I restart the device?"}).json()
+    assert body["context_used"] > 0
+    assert "device_manual.md" in body["sources"]
