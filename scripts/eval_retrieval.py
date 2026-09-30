@@ -32,6 +32,17 @@ Two things fix that, and both matter:
 The score is no longer perfect, and that is the point: a benchmark that cannot
 fail cannot detect a regression either.
 
+Refusal
+-------
+Retrieval always returns the nearest chunks, even for "How do I bake sourdough
+bread?". ``OFF_TOPIC`` is a set of questions the corpus cannot answer; with the
+relevance floor (``MIN_SCORE``) they should come back empty so the chain
+escalates. Two numbers matter and pull against each other:
+  - off-topic refused  -- higher is better
+  - answerable refused -- must stay at 0; each one is a real question dropped
+Both sets are small and hand-written, and the floor was chosen on them, so
+treat the result as a sanity check rather than a guarantee.
+
 Usage: python scripts/eval_retrieval.py [data/sample_docs] [--top-k 4]
 """
 
@@ -89,7 +100,24 @@ EVAL_SET: list[EvalQuery] = [
 ]
 
 
-def build_retriever(root: str, top_k: int) -> Retriever:
+# Questions no document in data/sample_docs/ can answer.
+OFF_TOPIC: list[str] = [
+    "What is the capital of France?",
+    "How do I bake sourdough bread?",
+    "Who won the World Cup in 2018?",
+    "Recommend a good sci-fi novel",
+    "What is the weather tomorrow?",
+    "How do I learn to play guitar?",
+    "Explain quantum entanglement simply",
+    "What's a healthy breakfast?",
+    "Translate hello into Spanish",
+    "How tall is Mount Everest?",
+    "Write a poem about autumn",
+    "What time zone is Tokyo in?",
+]
+
+
+def build_retriever(root: str, top_k: int, min_score: float = 0.0) -> Retriever:
     settings = get_settings()
     embedder = HashingEmbedder()
     store = InMemoryStore()
@@ -100,7 +128,7 @@ def build_retriever(root: str, top_k: int) -> Retriever:
     vectors = embedder.embed([c.text for c in chunks])
     store.add(vectors, [{"text": c.text, "source": c.source} for c in chunks])
 
-    return Retriever(embedder, store, top_k=top_k)
+    return Retriever(embedder, store, top_k=top_k, min_score=min_score)
 
 
 def evaluate(retriever: Retriever, eval_set: list[EvalQuery]) -> dict:
@@ -135,17 +163,35 @@ def evaluate(retriever: Retriever, eval_set: list[EvalQuery]) -> dict:
     }
 
 
+def evaluate_refusal(retriever: Retriever, eval_set: list[EvalQuery], off_topic: list[str]) -> dict:
+    wrongly_refused = [q.query for q in eval_set if not retriever.retrieve(q.query)]
+    answered_off_topic = [q for q in off_topic if retriever.retrieve(q)]
+    return {
+        "off_topic_refused": 1 - len(answered_off_topic) / len(off_topic),
+        "answerable_refused": len(wrongly_refused) / len(eval_set),
+        "wrongly_refused": wrongly_refused,
+        "answered_off_topic": answered_off_topic,
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("root", nargs="?", default="data/sample_docs")
     parser.add_argument("--top-k", type=int, default=4)
     parser.add_argument(
+        "--min-score",
+        type=float,
+        default=get_settings().min_score,
+        help="relevance floor (MIN_SCORE)",
+    )
+    parser.add_argument(
         "--show-misses", action="store_true", help="list queries whose top hit was wrong"
     )
     args = parser.parse_args()
 
-    retriever = build_retriever(args.root, args.top_k)
+    retriever = build_retriever(args.root, args.top_k, args.min_score)
     metrics = evaluate(retriever, EVAL_SET)
+    refusal = evaluate_refusal(retriever, EVAL_SET, OFF_TOPIC)
 
     print(f"Evaluated {metrics['n']} labeled queries against top-{args.top_k} retrieval\n")
     print(f"{'Metric':<15}{'Score':>8}")
@@ -153,12 +199,19 @@ def main() -> None:
     print(f"{'Precision@1':<15}{metrics['precision_at_1']:>8.2f}")
     print(f"{'Recall@' + str(args.top_k):<15}{metrics['recall_at_k']:>8.2f}")
     print(f"{'MRR':<15}{metrics['mrr']:>8.2f}")
+    print(f"\nRefusal at MIN_SCORE={args.min_score:g} ({len(OFF_TOPIC)} off-topic questions)\n")
+    print(f"{'Off-topic refused':<24}{refusal['off_topic_refused']:>8.2f}")
+    print(f"{'Answerable refused':<24}{refusal['answerable_refused']:>8.2f}")
 
     if args.show_misses and metrics["misses"]:
         print(f"\nTop-1 misses ({len(metrics['misses'])}):")
         for query, expected, got in metrics["misses"]:
             print(f"  {query}")
             print(f"    expected {expected}, got {got}")
+    if args.show_misses and refusal["answered_off_topic"]:
+        print(f"\nOff-topic questions still answered ({len(refusal['answered_off_topic'])}):")
+        for query in refusal["answered_off_topic"]:
+            print(f"  {query}")
 
 
 if __name__ == "__main__":
