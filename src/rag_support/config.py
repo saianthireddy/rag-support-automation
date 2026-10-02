@@ -11,7 +11,11 @@ class Settings:
         default_factory=lambda: os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
     )
     chat_model: str = field(default_factory=lambda: os.getenv("CHAT_MODEL", "gpt-4o-mini"))
-    vector_backend: str = field(default_factory=lambda: os.getenv("VECTOR_BACKEND", "faiss"))
+    # What the API actually runs. memory | chroma (the FAISS and Pinecone
+    # adapters exist in vectorstore/ but are not wired into the API).
+    vector_backend: str = field(default_factory=lambda: os.getenv("VECTOR_BACKEND", "memory"))
+    # native = the hand-rolled RagChain; langchain = the same recipe in LCEL.
+    pipeline: str = field(default_factory=lambda: os.getenv("PIPELINE", "native"))
     pinecone_api_key: str = field(default_factory=lambda: os.getenv("PINECONE_API_KEY", ""))
     pinecone_index: str = field(default_factory=lambda: os.getenv("PINECONE_INDEX", "support-kb"))
     chunk_size: int = field(default_factory=lambda: int(os.getenv("CHUNK_SIZE", "800")))

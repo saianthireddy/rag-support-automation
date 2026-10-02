@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from ..retrieval.retriever import Retriever
 from .prompts import SYSTEM_PROMPT, build_user_prompt
 
+ESCALATION = "I could not find relevant documentation. Please escalate to a human engineer."
+
 
 @dataclass
 class RagAnswer:
@@ -37,10 +39,7 @@ class RagChain:
         results = self._retriever.retrieve(question)
         if not results:
             return RagAnswer(
-                answer=(
-                    "I could not find relevant documentation. "
-                    "Please escalate to a human engineer."
-                ),
+                answer=ESCALATION,
                 sources=[],
                 context_used=0,
             )

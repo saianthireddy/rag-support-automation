@@ -33,20 +33,22 @@ flowchart LR
     G --> API["FastAPI<br/>/ask · /health"]
 ```
 
-Every layer sits behind a small interface, but today the running API always uses the offline column below — `config.py` defines the production settings, they just aren't read by `api/main.py` yet:
+Every layer sits behind a small interface. What the running API actually wires today, and what exists but isn't wired yet:
 
-| Layer        | Production                     | Offline / tests          |
-|--------------|--------------------------------|--------------------------|
-| Embeddings   | OpenAI `text-embedding-3-small`| Deterministic hashing embedder |
-| Vector store | FAISS or Pinecone              | Pure-python cosine store |
-| LLM          | OpenAI chat completions        | Injectable fake LLM      |
+| Layer        | Wired into the API (env var)                                   | Exists, not wired yet |
+|--------------|----------------------------------------------------------------|-----------------------|
+| Pipeline     | `PIPELINE=native` (hand-rolled) or `langchain` (LCEL)          | —                     |
+| Embeddings   | Deterministic hashing embedder                                 | OpenAI `text-embedding-3-small` |
+| Vector store | `VECTOR_BACKEND=memory` or `chroma` (embedded ChromaDB)        | FAISS, Pinecone       |
+| LLM          | OpenAI chat when `OPENAI_API_KEY` is set; otherwise the retrieved context is returned | — |
 
 This means the full pipeline — including the API — runs and tests **without any API keys**.
 
 ## Features
 
 - **Document ingestion** — recursive loading of manuals/SOPs with paragraph-aware chunking and sliding-window overlap
-- **Semantic search** — cosine similarity over embeddings; FAISS (self-hosted) and Pinecone (managed) backends exist behind the interface, but the running API uses the in-memory store today
+- **Semantic search** — cosine similarity over embeddings, in an in-memory store or embedded ChromaDB (`VECTOR_BACKEND`); FAISS and Pinecone adapters exist behind the same interface but aren't wired into the API
+- **Two pipelines, one recipe** — the hand-rolled chain and a LangChain (LCEL) version share the embedder, chunks, relevance floor, prompts and escalation, and score identically on the eval (see [LangChain vs the hand-rolled pipeline](#langchain-vs-the-hand-rolled-pipeline))
 - **Grounded generation** — answers cite source documents. A relevance floor (`MIN_SCORE`) drops weak matches, so a question the corpus can't answer retrieves nothing and is escalated to a human instead of being answered from unrelated chunks. Measured on the eval below: 10 of 12 off-topic questions are escalated, and no answerable question is
 - **FastAPI service** — `/ask` and `/health` endpoints with Pydantic validation
 - **Deployable** — Dockerfile, docker-compose, GitHub Actions CI (lint + tests on Python 3.11/3.12)
@@ -76,12 +78,16 @@ curl -X POST http://localhost:8000/ask \
   -d '{"question": "How do I restart the device?"}'
 ```
 
-### With OpenAI + Pinecone (not wired yet)
+### Choosing the pipeline, store and LLM
 
 ```bash
-cp .env.example .env   # not read by api/main.py yet — this still boots the same offline pipeline
+cp .env.example .env   # PIPELINE, VECTOR_BACKEND, MIN_SCORE, OPENAI_API_KEY are read at startup
 docker compose up --build
 ```
+
+`PIPELINE=langchain VECTOR_BACKEND=chroma` runs the LangChain version on ChromaDB; setting
+`OPENAI_API_KEY` swaps the offline fallback for real chat completions in either pipeline.
+Embeddings stay on the offline hashing embedder, and Pinecone/FAISS aren't wired yet.
 
 ## Project structure
 
@@ -90,9 +96,9 @@ src/rag_support/
 ├── config.py            # env-driven settings
 ├── ingestion/           # document loading + chunking
 ├── embeddings/          # OpenAI + hashing embedders behind one interface
-├── vectorstore/         # FAISS, Pinecone, in-memory backends
+├── vectorstore/         # in-memory and ChromaDB (wired); FAISS, Pinecone adapters
 ├── retrieval/           # top-k semantic retriever
-├── generation/          # prompts + RAG chain
+├── generation/          # prompts, hand-rolled RAG chain, LangChain (LCEL) pipeline
 └── api/                 # FastAPI app + schemas
 scripts/ingest.py        # CLI ingestion with chunk statistics
 scripts/eval_retrieval.py # CLI retrieval-quality eval (precision/recall/MRR)
@@ -173,10 +179,53 @@ The eval set lives in the script (`EVAL_SET`) — add a row any time a new
 sample doc is added under `data/sample_docs/`, so retrieval quality stays
 covered as the knowledge base grows.
 
+## LangChain vs the hand-rolled pipeline
+
+The same RAG recipe exists twice: a small hand-rolled chain
+(`generation/chain.py`) and a LangChain version in LCEL
+(`generation/langchain_pipeline.py`). Both share the embedder, chunks,
+`TOP_K`, `MIN_SCORE`, prompts and escalation message, so a difference in the
+numbers would come from the framework or the index, not the recipe. Switch
+with `PIPELINE=langchain` and `VECTOR_BACKEND=chroma`.
+
+```bash
+python scripts/eval_retrieval.py --compare
+```
+
+```
+Pipeline   Store      P@1   R@4   MRR  Off-topic refused  Answerable refused
+----------------------------------------------------------------------------
+native     memory    0.89  1.00  0.94               0.83                0.00
+native     chroma    0.89  1.00  0.94               0.83                0.00
+langchain  memory    0.89  1.00  0.94               0.83                0.00
+langchain  chroma    0.89  1.00  0.94               0.83                0.00
+```
+
+Identical, as they should be: the framework and the index don't change
+retrieval quality here — the embedder and chunking do. Chroma's approximate
+(HNSW) index returns the same ranking as exact search on a corpus this small
+(8 chunks). `tests/test_langchain_chroma.py` fails CI if any row diverges.
+
+What each is good for, based on building both:
+
+- **LangChain** gives swappable parts for free: `Chroma`, `ChatOpenAI` and the
+  retriever's `similarity_score_threshold` plug in with a line each, and LCEL
+  makes the flow (retrieve → escalate or prompt → LLM) explicit.
+- **Hand-rolled** has fewer surprises. Two things needed fixing on the
+  LangChain side: `InMemoryVectorStore` declares no relevance function, so
+  threshold retrieval raised until a subclass passed its cosine scores through;
+  and a question made only of stopwords ("what is it?") embeds to the zero
+  vector, which crashed LangChain's cosine on NaN (Chroma and the native stores
+  score it 0, below the floor). LangChain also logs a warning on every
+  off-topic question, which is the designed escalation path, so that one
+  message is filtered.
+- Both escalate **without calling the LLM** when nothing clears the floor,
+  which the tests assert.
+
 ## Testing & CI
 
 ```bash
-pytest -q          # 14 tests, all offline
+pytest -q          # 31 tests, all offline
 ruff check src tests
 ```
 
